@@ -2,7 +2,8 @@ name: Auto-close staging -> main PRs
 
 on:
   pull_request_target:
-    types: [opened, reopened]
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
 
 permissions:
   pull-requests: write
@@ -11,6 +12,7 @@ permissions:
 jobs:
   close_staging_to_main:
     if: >-
+      github.event_name == 'pull_request_target' &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.ref == 'staging' &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -19,7 +21,7 @@ jobs:
       - name: Close PR
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.PROMOTION_TOKEN || github.token }}
+          github-token: ${{ secrets.PROMOTION_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
@@ -43,3 +45,63 @@ jobs:
               pull_number,
               state: 'closed',
             });
+
+  sweep_open_staging_to_main:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close any open staging -> main PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROMOTION_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const base = 'main';
+            const head = `${owner}:staging`;
+
+            let closedCount = 0;
+            let page = 1;
+
+            while (true) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: 'open',
+                base,
+                head,
+                per_page: 100,
+                page,
+              });
+
+              if (prs.length === 0) break;
+
+              for (const pr of prs) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  body: [
+                    'Closing this PR automatically.',
+                    '',
+                    'Direct PRs from `staging` to `main` are not allowed in this repo.',
+                    'Use the data-only promotion PR from `promote-data-staging-to-main` instead.',
+                  ].join('\n'),
+                });
+
+                await github.rest.pulls.update({
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  state: 'closed',
+                });
+
+                closedCount += 1;
+                core.info(`Closed PR #${pr.number}: ${pr.html_url}`);
+              }
+
+              page += 1;
+            }
+
+            core.info(`Done. Closed ${closedCount} staging -> main PR(s).`);
