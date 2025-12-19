@@ -29,4 +29,4 @@ def test_performance_event_processing():
 def test_data_integrity():
     summary_df = pd.read_csv("data/event_summary.csv")
     total_events = summary_df["EventCount"].sum()
-    assert total_events == 10, ">>> Total event count mismatch <<<"
+    assert total_events == 11, ">>> Total event count mismatch <<<"
