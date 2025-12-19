@@ -1,0 +1,45 @@
+name: Auto-close staging -> main PRs
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  close_staging_to_main:
+    if: >-
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.ref == 'staging' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROMOTION_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pull_number,
+              body: [
+                'Closing this PR automatically.',
+                '',
+                'Direct PRs from `staging` to `main` are not allowed in this repo.',
+                'Use the data-only promotion PR from `promote-data-staging-to-main` instead.',
+              ].join('\n'),
+            });
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number,
+              state: 'closed',
+            });
