@@ -68,7 +68,7 @@ jobs:
         run: |
           python -m pytest tests/test_events_staging.py
 
-  create_pr_to_staging:
+  create_pr_to_main:
     needs: run_staging_tests
     runs-on: ubuntu-latest
     steps:
