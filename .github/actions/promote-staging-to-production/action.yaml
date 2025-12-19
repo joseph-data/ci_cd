@@ -1,5 +1,5 @@
 name: Promote staging to production
-description: Create or reuse a PR from a head branch to a base branch.
+description: Create or reuse a PR from a data-only promotion branch to production.
 
 inputs:
   head:
@@ -10,63 +10,118 @@ inputs:
     description: Target branch (base)
     required: false
     default: main
+  path:
+    description: Folder path to promote
+    required: false
+    default: data
+  promotion_branch:
+    description: Branch name used for the data-only PR
+    required: false
+    default: promote-data-staging-to-main
+  token:
+    description: Token used for git push + PR creation (PAT if repo blocks GITHUB_TOKEN PRs)
+    required: false
 
 runs:
   using: composite
   steps:
-    - name: Create or reuse PR (head -> base)
+    - name: Prepare data-only promotion branch
+      id: prep
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        head='${{ inputs.head }}'
+        base='${{ inputs.base }}'
+        path='${{ inputs.path }}'
+        promotion_branch='${{ inputs.promotion_branch }}'
+        token='${{ inputs.token }}'
+
+        if [[ -z "${path}" || "${path}" == "." || "${path}" == "/" ]]; then
+          echo "Invalid path input: '${path}'" >&2
+          exit 1
+        fi
+
+        # Optional: use a PAT for pushing if the repo blocks GITHUB_TOKEN PR creation.
+        if [[ -n "${token}" ]]; then
+          git remote set-url origin "https://x-access-token:${token}@github.com/${GITHUB_REPOSITORY}.git"
+        fi
+
+        git fetch --no-tags --prune origin "${base}" "${head}"
+
+        if git diff --quiet "origin/${base}...origin/${head}" -- "${path}"; then
+          echo "No changes under '${path}' between '${head}' and '${base}'."
+          echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+          echo "promotion_branch=" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        git checkout -B "${promotion_branch}" "origin/${base}"
+
+        # Make the promoted folder match the head branch exactly.
+        git rm -r --ignore-unmatch "${path}" >/dev/null 2>&1 || true
+        rm -rf "${path}"
+        git checkout "origin/${head}" -- "${path}"
+        git add "${path}"
+
+        if git diff --cached --quiet; then
+          echo "No staged changes after syncing '${path}'."
+          echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+          echo "promotion_branch=" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        git commit -m "Promote ${path} from ${head} to ${base}"
+        git push --force-with-lease origin "${promotion_branch}"
+
+        echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+        echo "promotion_branch=${promotion_branch}" >> "${GITHUB_OUTPUT}"
+
+    - name: Create or reuse PR (promotion branch -> base)
+      if: steps.prep.outputs.has_changes == 'true'
       id: pr
       uses: actions/github-script@v7
       with:
+        github-token: ${{ inputs.token || github.token }}
         script: |
           const owner = context.repo.owner;
           const repo = context.repo.repo;
-          const head = '${{ inputs.head }}';
           const base = '${{ inputs.base }}';
+          const promotionBranch = '${{ steps.prep.outputs.promotion_branch }}';
 
-          // Compare commits between base and head to see if there's anything to promote
-          const comparison = await github.rest.repos.compareCommitsWithBasehead({
-            owner,
-            repo,
-            basehead: `${base}...${head}`,
-          });
-
-          // If there are no commits to merge, exit early
-          if (comparison.data.total_commits === 0) {
-            core.info(`No changes to merge from ${head} into ${base}.`);
-            core.setOutput('pr_number', '');
-            core.setOutput('pr_url', '');
-            return;
-          }
-
-          // Look for an existing open PR from head -> base
-          const { data: prs } = await github.rest.pulls.list({
-            owner,
-            repo,
-            state: 'open',
-            base,
-            head: `${owner}:${head}`,
-            per_page: 1,
-          });
-
-          let pr = prs[0];
-
-          // If no PR exists, create one
-          if (!pr) {
-            const created = await github.rest.pulls.create({
+          try {
+            const { data: prs } = await github.rest.pulls.list({
               owner,
               repo,
-              head,
+              state: 'open',
               base,
-              title: 'Promote staging to production',
-              body: 'This PR promotes all changes from staging to production.',
+              head: `${owner}:${promotionBranch}`,
+              per_page: 1,
             });
-            pr = created.data;
-            core.info(`Created PR #${pr.number}: ${pr.html_url}`);
-          } else {
-            core.info(`Reusing existing PR #${pr.number}: ${pr.html_url}`);
-          }
 
-          // Expose PR details for the next step
-          core.setOutput('pr_number', String(pr.number));
-          core.setOutput('pr_url', pr.html_url);
+            let pr = prs[0];
+            if (!pr) {
+              const created = await github.rest.pulls.create({
+                owner,
+                repo,
+                head: promotionBranch,
+                base,
+                title: 'Promote data to production',
+                body: 'This PR promotes only the `data/` folder from staging to production.',
+              });
+              pr = created.data;
+              core.info(`Created PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              core.info(`Reusing existing PR #${pr.number}: ${pr.html_url}`);
+            }
+
+            core.setOutput('pr_number', String(pr.number));
+            core.setOutput('pr_url', pr.html_url);
+          } catch (error) {
+            core.setFailed(
+              `Failed to create/reuse PR. If you see "GitHub Actions is not permitted to create or approve pull requests", enable Actions PR permissions or pass a PAT via the 'token' input. Original error: ${error.message}`,
+            );
+          }
