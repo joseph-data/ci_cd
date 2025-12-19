@@ -1,0 +1,86 @@
+name: DEV CI/CD Pipeline for Events
+
+on:
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build_dev_environment:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up Python environment
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir pandas pytest
+          python -m pip list
+
+  run_dev_tests:
+    needs: build_dev_environment
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout the code again for the test job
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up Python environment again
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # 3. Install dependencies again
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir pandas pytest
+
+      # 4. Set PYTHONPATH to include the src directory
+      - name: Set PYTHONPATH
+        run: |
+          echo "PYTHONPATH=$(pwd)/src" >> $GITHUB_ENV
+
+      # 5. Print Python Path
+      - name: Print Python Path
+        run: |
+          which python
+          python --version
+          pip --version
+          echo $PYTHONPATH
+
+      # 6. Run unit and integration tests using python -m pytest
+      - name: Run unit and integration tests
+        run: |
+          python -m pytest tests/test_events_dev.py
+
+  create_pr_to_staging:
+    needs: run_dev_tests
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout the code before creating a pull request
+      - name: Checkout repo to create PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. Promote development -> staging (create/reuse PR + squash merge)
+      - name: Promote development -> staging
+        uses: ./.github/actions/promote-dev-to-staging
+        with:
+          head: development
+          base: staging
