@@ -48,9 +48,12 @@ runs:
         fi
 
         git fetch --no-tags --prune origin "${base}" "${head}"
+        git fetch --no-tags origin "${promotion_branch}" || true
 
-        if git diff --quiet "origin/${base}...origin/${head}" -- "${path}"; then
-          echo "No changes under '${path}' between '${head}' and '${base}'."
+        # Use a direct tree diff between base and head (not merge-base '...') so we still
+        # promote when base diverged (e.g., base deleted/changed files under path).
+        if git diff --quiet "origin/${base}" "origin/${head}" -- "${path}"; then
+          echo "No changes under '${path}' between '${base}' and '${head}'."
           echo "has_changes=false" >> "${GITHUB_OUTPUT}"
           echo "promotion_branch=" >> "${GITHUB_OUTPUT}"
           exit 0
