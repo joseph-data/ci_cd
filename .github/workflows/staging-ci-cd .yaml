@@ -78,7 +78,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 2. Promote staging -> production (create/reuse PR + squash merge)
+      # 2. Promote staging -> production (create/reuse PR)
       - name: Promote staging -> production
         uses: ./.github/actions/promote-staging-to-production
         with:

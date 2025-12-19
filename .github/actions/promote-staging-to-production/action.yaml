@@ -1,5 +1,5 @@
 name: Promote staging to production
-description: Reuse PR from a head branch to a base branch and squash-merge it.
+description: Create or reuse a PR from a head branch to a base branch.
 
 inputs:
   head:
@@ -58,8 +58,8 @@ runs:
               repo,
               head,
               base,
-              title: 'Deploy changes from DEV to staging',
-              body: 'This PR automatically deploys all changes from development to staging.',
+              title: 'Promote staging to production',
+              body: 'This PR promotes all changes from staging to production.',
             });
             pr = created.data;
             core.info(`Created PR #${pr.number}: ${pr.html_url}`);
@@ -70,25 +70,3 @@ runs:
           // Expose PR details for the next step
           core.setOutput('pr_number', String(pr.number));
           core.setOutput('pr_url', pr.html_url);
-
-    - name: Auto-merge PR
-      if: steps.pr.outputs.pr_number != ''
-      uses: actions/github-script@v7
-      env:
-        PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
-      with:
-        script: |
-          const owner = context.repo.owner;
-          const repo = context.repo.repo;
-          const pull_number = Number(process.env.PR_NUMBER);
-
-          await github.rest.pulls.merge({
-            owner,
-            repo,
-            pull_number,
-            merge_method: 'squash',
-            commit_title: 'Automatically deploy changes from DEV to staging',
-            commit_message: 'Automated merge of development into staging.',
-          });
-
-          core.info(`Merged PR #${pull_number} (squash).`);
